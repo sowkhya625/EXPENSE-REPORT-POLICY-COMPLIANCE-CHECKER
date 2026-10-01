@@ -1,0 +1,485 @@
+{
+  "name": "Expense report policy compliance checker",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Expense Receipt Submission",
+        "formDescription": "Upload a scanned receipt (photo or image). It will be checked against the company reimbursement policy before going to your manager.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Your name",
+              "fieldName": "employee_name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Your email",
+              "fieldType": "email",
+              "fieldName": "employee_email",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Manager email",
+              "fieldType": "email",
+              "fieldName": "manager_email",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Business purpose",
+              "fieldType": "textarea",
+              "fieldName": "business_purpose",
+              "placeholder": "e.g. Client dinner with Acme team",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Number of people covered (for meals)",
+              "fieldType": "number",
+              "fieldName": "attendees",
+              "defaultValue": "1"
+            },
+            {
+              "fieldLabel": "Receipt image",
+              "fieldType": "file",
+              "fieldName": "receipt",
+              "multipleFiles": false,
+              "acceptFileTypes": ".jpg,.jpeg,.png,.webp",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "path": "expense-receipt",
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "Thanks! Your receipt is being checked and will be sent to your manager."
+            }
+          }
+        }
+      },
+      "id": "7cb645ee-4287-420e-b11c-e45557cf3636",
+      "name": "Submit Expense Receipt",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "ec3b1d6c-7ef1-4aa0-bd51-02c988859cd4"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Put the uploaded receipt under the binary key \"data\" so the AI step can read it.\nreturn $input.all().map(item => {\n  const binary = item.binary || {};\n  const keys = Object.keys(binary);\n  if (keys.length === 0) return { json: item.json };\n  return { json: item.json, binary: { data: binary[keys[0]] } };\n});"
+      },
+      "id": "a91a869e-b9cb-4da8-abed-fbaa850a4235",
+      "name": "Prepare Receipt Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Read the attached receipt image. Business purpose given by the employee: {{ $json.business_purpose }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You read scanned expense receipts. Extract the merchant name, receipt date, currency, total amount and every line item with quantity and line total. Classify each line item into exactly one category: meals (food and non-alcoholic drinks), alcohol (beer, wine, spirits, cocktails, bar drinks), travel (taxi, cab, ride-hailing, fuel, parking, tolls, train, flight, bus), accommodation (hotel, lodging), office_supplies (stationery, printer ink, small office equipment), entertainment (movies, events, recreation), other (anything else, including taxes or tips shown as separate lines). Copy amounts exactly as printed; never guess missing values - leave text empty or use 0. Set is_readable to false if the image is not a legible receipt."
+            },
+            {
+              "type": "HumanMessagePromptTemplate",
+              "messageType": "imageBinary",
+              "imageDetail": "high"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "b036ed18-1159-4f69-8681-e8d7e7c655b6",
+      "name": "Read Receipt",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5.4-mini",
+          "cachedResultName": "gpt-5.4-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "bde3fb23-49eb-4a72-9b88-880bb3d7e779",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        416,
+        224
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"is_readable\": {\n      \"type\": \"boolean\",\n      \"description\": \"false if the image is not a legible receipt\"\n    },\n    \"merchant\": {\n      \"type\": \"string\"\n    },\n    \"receipt_date\": {\n      \"type\": \"string\",\n      \"description\": \"YYYY-MM-DD, empty if not visible\"\n    },\n    \"currency\": {\n      \"type\": \"string\",\n      \"description\": \"ISO code, e.g. INR\"\n    },\n    \"total_amount\": {\n      \"type\": \"number\"\n    },\n    \"line_items\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"description\": {\n            \"type\": \"string\"\n          },\n          \"quantity\": {\n            \"type\": \"number\"\n          },\n          \"amount\": {\n            \"type\": \"number\",\n            \"description\": \"line total\"\n          },\n          \"category\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"meals\",\n              \"alcohol\",\n              \"travel\",\n              \"accommodation\",\n              \"office_supplies\",\n              \"entertainment\",\n              \"other\"\n            ]\n          }\n        },\n        \"required\": [\n          \"description\",\n          \"amount\",\n          \"category\"\n        ]\n      }\n    }\n  },\n  \"required\": [\n    \"is_readable\",\n    \"merchant\",\n    \"receipt_date\",\n    \"total_amount\",\n    \"line_items\"\n  ]\n}"
+      },
+      "id": "c16bcc0d-b790-4006-a1c7-f1565c359259",
+      "name": "Receipt Fields",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        592,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "EVPv1YUFN1mq5jXs",
+          "cachedResultName": "expense_receipt_log"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "receipt_key",
+              "keyValue": "={{ String($json.output.merchant || \"\").toLowerCase().trim() }}|{{ $json.output.receipt_date || \"\" }}|{{ Number($json.output.total_amount || 0).toFixed(2) }}"
+            }
+          ]
+        },
+        "limit": 5
+      },
+      "id": "a24163e8-eb9e-49e6-a042-9b66ad4b42e5",
+      "name": "Find Previous Claims",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== Company reimbursement policy (edit these rules) =====\nconst POLICY = {\n  mealLimitPerPerson: 2000,                  // max meal spend per person covered\n  disallowedCategories: ['alcohol'],          // never reimbursable\n  allowedCategories: ['office_supplies', 'accommodation'],\n  purposeRequiredCategories: ['travel'],      // need a business purpose\n  reviewCategories: ['entertainment', 'other'] // always sent for manual review\n};\n// ===========================================================\n\nconst form = $('Submit Expense Receipt').first().json;\nconst receipt = ($('Read Receipt').first().json.output) || {};\nconst previous = $input.all().filter(i => i.json && i.json.receipt_key);\n\nconst currency = receipt.currency || 'INR';\nconst money = n => currency + ' ' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });\nconst attendees = Math.max(1, Number(form.attendees) || 1);\nconst purpose = String(form.business_purpose || '').trim();\nconst items = Array.isArray(receipt.line_items) ? receipt.line_items : [];\nconst receiptKey = String(receipt.merchant || '').toLowerCase().trim() + '|' + (receipt.receipt_date || '') + '|' + Number(receipt.total_amount || 0).toFixed(2);\n\nconst receiptIssues = [];\nif (receipt.is_readable === false) receiptIssues.push('Receipt image is not legible.');\nif (!receipt.merchant) receiptIssues.push('Merchant name is missing.');\nif (!receipt.receipt_date) receiptIssues.push('Receipt date is missing.');\nif (!Number(receipt.total_amount)) receiptIssues.push('Total amount is missing.');\nif (items.length === 0) receiptIssues.push('No line items could be read.');\nconst isDuplicate = previous.length > 0;\nif (isDuplicate) receiptIssues.push('Possible duplicate: a receipt with the same merchant, date and total was already submitted.');\n\nconst mealLimit = POLICY.mealLimitPerPerson * attendees;\nconst mealTotal = items.filter(i => i.category === 'meals').reduce((s, i) => s + Number(i.amount || 0), 0);\nconst mealOver = mealTotal > mealLimit;\n\nconst checked = items.map(i => {\n  const cat = i.category || 'other';\n  let status = 'ALLOWED';\n  let reason = 'Within policy.';\n  if (POLICY.disallowedCategories.includes(cat)) {\n    status = 'DISALLOWED'; reason = 'Category \"' + cat + '\" is not reimbursable.';\n  } else if (cat === 'meals') {\n    if (mealOver) { status = 'NEEDS REVIEW'; reason = 'Meal total ' + money(mealTotal) + ' exceeds the limit of ' + money(mealLimit) + ' (' + attendees + ' person(s)) by ' + money(mealTotal - mealLimit) + '.'; }\n  } else if (POLICY.purposeRequiredCategories.includes(cat)) {\n    if (purpose.length < 5) { status = 'NEEDS REVIEW'; reason = 'Business purpose is required for ' + cat + ' expenses.'; }\n  } else if (POLICY.reviewCategories.includes(cat)) {\n    status = 'NEEDS REVIEW'; reason = 'Category \"' + cat + '\" requires manager review.';\n  } else if (!POLICY.allowedCategories.includes(cat)) {\n    status = 'NEEDS REVIEW'; reason = 'No policy rule for this category.';\n  }\n  return { description: i.description || '', quantity: i.quantity || 1, amount: Number(i.amount || 0), category: cat, status, reason };\n});\n\nconst flagged = checked.filter(i => i.status !== 'ALLOWED');\nconst flaggedAmount = flagged.reduce((s, i) => s + i.amount, 0);\nconst hasDisallowed = checked.some(i => i.status === 'DISALLOWED');\nlet overall = 'COMPLIANT';\nif (isDuplicate || hasDisallowed) overall = 'NON-COMPLIANT';\nelse if (flagged.length > 0 || receiptIssues.length > 0) overall = 'NEEDS REVIEW';\n\nlet allowedAmount = checked.filter(i => i.status === 'ALLOWED').reduce((s, i) => s + i.amount, 0);\nif (mealOver) allowedAmount += mealLimit; // meals reimbursable up to the limit if approved\nif (isDuplicate) allowedAmount = 0;\n\nconst color = { 'ALLOWED': '#1a7f37', 'NEEDS REVIEW': '#b26a00', 'DISALLOWED': '#c62828' };\nconst rows = checked.map(i =>\n  '<tr><td>' + i.description + '</td><td>' + i.category + '</td><td align=\"right\">' + money(i.amount) +\n  '</td><td style=\"color:' + color[i.status] + ';font-weight:bold\">' + i.status + '</td><td>' + i.reason + '</td></tr>'\n).join('');\nconst issuesHtml = receiptIssues.length ? '<p><b>Receipt issues:</b></p><ul>' + receiptIssues.map(x => '<li>' + x + '</li>').join('') + '</ul>' : '';\n\nconst html =\n  '<h2>Expense compliance check: ' + overall + '</h2>' +\n  '<p><b>Employee:</b> ' + (form.employee_name || '') + ' (' + (form.employee_email || '') + ')<br>' +\n  '<b>Business purpose:</b> ' + purpose + '<br>' +\n  '<b>Merchant:</b> ' + (receipt.merchant || '-') + '<br>' +\n  '<b>Date:</b> ' + (receipt.receipt_date || '-') + '<br>' +\n  '<b>Claimed total:</b> ' + money(receipt.total_amount) + '<br>' +\n  '<b>Flagged items:</b> ' + flagged.length + ' (' + money(flaggedAmount) + ')<br>' +\n  '<b>Reimbursable if approved as-is:</b> ' + money(allowedAmount) + '</p>' +\n  issuesHtml +\n  '<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\" style=\"border-collapse:collapse\">' +\n  '<tr><th>Item</th><th>Category</th><th>Amount</th><th>Status</th><th>Reason</th></tr>' + rows + '</table>' +\n  '<p>Please approve, reject, or follow up with the employee.</p>';\n\nreturn [{ json: {\n  receipt_key: receiptKey,\n  employee_name: form.employee_name || '',\n  employee_email: form.employee_email || '',\n  manager_email: form.manager_email || '',\n  merchant: receipt.merchant || '',\n  receipt_date: receipt.receipt_date || '',\n  total_amount: Number(receipt.total_amount || 0),\n  overall_status: overall,\n  flagged_count: flagged.length,\n  flagged_amount: flaggedAmount,\n  reimbursable_amount: allowedAmount,\n  line_items_json: JSON.stringify(checked),\n  receipt_issues: receiptIssues,\n  report_html: html\n} }];"
+      },
+      "id": "c29bdcb5-b254-464f-92d2-90b1ae6efefb",
+      "name": "Check Policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "EVPv1YUFN1mq5jXs",
+          "cachedResultName": "expense_receipt_log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "receipt_key": "={{ $json.receipt_key }}",
+            "employee_name": "={{ $json.employee_name }}",
+            "employee_email": "={{ $json.employee_email }}",
+            "manager_email": "={{ $json.manager_email }}",
+            "merchant": "={{ $json.merchant }}",
+            "receipt_date": "={{ $json.receipt_date }}",
+            "total_amount": "={{ $json.total_amount }}",
+            "overall_status": "={{ $json.overall_status }}",
+            "flagged_count": "={{ $json.flagged_count }}",
+            "flagged_amount": "={{ $json.flagged_amount }}",
+            "line_items_json": "={{ $json.line_items_json }}",
+            "submitted_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "receipt_key",
+              "displayName": "receipt_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "employee_name",
+              "displayName": "employee_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "employee_email",
+              "displayName": "employee_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "manager_email",
+              "displayName": "manager_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "merchant",
+              "displayName": "merchant",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "receipt_date",
+              "displayName": "receipt_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "total_amount",
+              "displayName": "total_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "overall_status",
+              "displayName": "overall_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "flagged_count",
+              "displayName": "flagged_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "flagged_amount",
+              "displayName": "flagged_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "line_items_json",
+              "displayName": "line_items_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "submitted_at",
+              "displayName": "submitted_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "50242e6c-84af-40d7-9f0c-d6d00bee717c",
+      "name": "Log Receipt Check",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1248,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $(\"Check Policy\").item.json.manager_email }}",
+        "subject": "=[{{ $(\"Check Policy\").item.json.overall_status }}] Expense receipt from {{ $(\"Check Policy\").item.json.employee_name }} - {{ $(\"Check Policy\").item.json.merchant }}",
+        "message": "={{ $(\"Check Policy\").item.json.report_html }}",
+        "options": {
+          "appendAttribution": false,
+          "ccList": "={{ $(\"Check Policy\").item.json.employee_email }}"
+        }
+      },
+      "id": "1a5d2ebb-26de-4d45-86eb-138e6b4e4005",
+      "name": "Send Report to Manager",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1472,
+        0
+      ],
+      "webhookId": "316ce029-d1a7-48e9-b16a-65d1f84b0ef8",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Y7eYQ5joNViR7Sw2",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Submit Expense Receipt": {
+      "main": [
+        [
+          {
+            "node": "Prepare Receipt Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Receipt Image": {
+      "main": [
+        [
+          {
+            "node": "Read Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Receipt": {
+      "main": [
+        [
+          {
+            "node": "Find Previous Claims",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Read Receipt",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receipt Fields": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Read Receipt",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Previous Claims": {
+      "main": [
+        [
+          {
+            "node": "Check Policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Policy": {
+      "main": [
+        [
+          {
+            "node": "Log Receipt Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Receipt Check": {
+      "main": [
+        [
+          {
+            "node": "Send Report to Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "7f6391c1-6ea2-4e43-96fa-9df654919ec7",
+  "meta": {
+    "instanceId": "daf0fd9996ed4af0c5d778558a8bb83d1f923250d02a0c777eb19ba9cbe0bfe8"
+  },
+  "nodeGroups": [],
+  "id": "ghBxmPgmCxBAvnyL",
+  "tags": []
+}
