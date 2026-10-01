@@ -1,3 +1,5 @@
+<img width="1541" height="560" alt="Screenshot 2026-10-01 151236" src="https://github.com/user-attachments/assets/28455a1a-e487-476c-8ff4-12315994189c" />
+
 EXPENSE REPORT POLICY COMPLIANCE CHECKER
 AI-Powered Receipt Verification and Compliance System
 1. Introduction
